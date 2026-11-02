@@ -1,0 +1,5 @@
+name: DaySleepPlugin
+version: 1.0.0
+main: com.example.daysleep.DaySleepPlugin
+api-version: "1.21"
+description: Allows players to sleep during the day and skip to night.
