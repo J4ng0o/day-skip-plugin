@@ -38,29 +38,29 @@ public class BedListener implements Listener {
         Player player = event.getPlayer();
         World world = player.getWorld();
 
+        // Если ночь или не обычный мир - не вмешиваемся
         if (world.getTime() >= 12000 || world.getEnvironment() != World.Environment.NORMAL) return;
 
         event.setCancelled(true);
 
+        // 1. Укладываем игрока (force = true позволяет лечь днем)
         boolean success = player.sleep(block.getLocation(), true);
         if (!success) return;
 
         sleepingPlayers.add(player.getUniqueId());
 
-        // --- ДОБАВЛЯЕМ СООБЩЕНИЕ В ACTIONBAR ---
-        // Создаем компонент с желтым текстом
-        Component actionBarMessage = Component.text("Вы проспите весь день...", NamedTextColor.YELLOW);
-        
-        // Отправляем сообщение (по умолчанию висит около 2-3 секунд)
+        // 2. Надпись БЕЛЫМ цветом (NamedTextColor.WHITE)
+        Component actionBarMessage = Component.text("Вы проспите весь день...", NamedTextColor.WHITE);
         player.sendActionBar(actionBarMessage);
 
-        // Отключаем цикл времени, чтобы сервер не мешал
+        // 3. Сохраняем старый геймрул и выключаем течение времени
         Boolean oldDaylightCycle = world.getGameRuleValue(GameRule.DO_DAYLIGHT_CYCLE);
         world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
         
+        // 4. Принудительно ставим время на ночь (чтобы сервер не выкинул игрока)
         world.setTime(13000);
 
-        // Удерживаем время на 13000
+        // 5. Удерживаем время и ActionBar
         BukkitRunnable timeLocker = new BukkitRunnable() {
             @Override
             public void run() {
@@ -68,31 +68,33 @@ public class BedListener implements Listener {
                     this.cancel();
                     return;
                 }
-                world.setTime(13000);
                 
-                // Дополнительно обновляем ActionBar каждый тик, 
-                // чтобы он не пропадал раньше времени (опционально)
+                // Жестко фиксируем время, чтобы ванильный сервер не мог его сбросить
+                world.setTime(13000);
                 player.sendActionBar(actionBarMessage);
             }
         };
         timeLocker.runTaskTimer(plugin, 0L, 1L);
 
-        // Через 3 секунды будим
+        // 6. Через 3 секунды будим игрока
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (player.isOnline() && sleepingPlayers.contains(player.getUniqueId())) {
                 timeLocker.cancel(); 
                 
+                // Возвращаем геймрул
                 if (oldDaylightCycle != null) {
                     world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, oldDaylightCycle);
                 }
                 
-                world.setTime(0); // Утро
+                // Ставим утро (1000 тиков - это стандартное утро в Minecraft, 0 - это тоже утро, но 1000 красивее)
+                world.setTime(1000); 
+                
                 sleepingPlayers.remove(player.getUniqueId());
                 
-                // Очищаем ActionBar, чтобы текст исчез сразу после пробуждения
+                // Очищаем ActionBar
                 player.sendActionBar(Component.empty());
             }
-        }, 60L); // 3 секунды
+        }, 60L); // 3 секунды (60 тиков)
     }
 
     @EventHandler
