@@ -1,7 +1,9 @@
 package com.example.daysleep;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
+import org.bukkit.GameRule;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -11,6 +13,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -19,7 +22,6 @@ import java.util.UUID;
 public class BedListener implements Listener {
 
     private final JavaPlugin plugin;
-    // Храним игроков, которые сейчас "спят днем", чтобы не сломать им выход из игры
     private final Set<UUID> sleepingPlayers = new HashSet<>();
 
     public BedListener(JavaPlugin plugin) {
@@ -36,39 +38,72 @@ public class BedListener implements Listener {
         Player player = event.getPlayer();
         World world = player.getWorld();
 
-        // Если уже ночь или это не обычный мир — работаем как в ваниле
         if (world.getTime() >= 12000 || world.getEnvironment() != World.Environment.NORMAL) return;
 
-        // Отменяем стандартное поведение (чтобы кровать не взорвалась днем)
         event.setCancelled(true);
 
-        // 1. Принудительно укладываем игрока в кровать
-        // Метод force = true позволяет лечь днем
         boolean success = player.sleep(block.getLocation(), true);
         if (!success) return;
 
-        // Запоминаем, что игрок спит
         sleepingPlayers.add(player.getUniqueId());
 
-        // 2. Сразу же (в следующем тике) меняем время на ночь,
-        // чтобы сервер не выкинул игрока из кровати из-за дневного времени
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            world.setTime(13000);
-        });
+        // --- ДОБАВЛЯЕМ СООБЩЕНИЕ В ACTIONBAR ---
+        // Создаем компонент с желтым текстом
+        Component actionBarMessage = Component.text("Вы проспите весь день...", NamedTextColor.YELLOW);
+        
+        // Отправляем сообщение (по умолчанию висит около 2-3 секунд)
+        player.sendActionBar(actionBarMessage);
 
-        // 3. Ждем 3 секунды (60 тиков) и меняем время на утро.
-        // В этот момент игрок "проснется" и встанет с кровати.
+        // Отключаем цикл времени, чтобы сервер не мешал
+        Boolean oldDaylightCycle = world.getGameRuleValue(GameRule.DO_DAYLIGHT_CYCLE);
+        world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        
+        world.setTime(13000);
+
+        // Удерживаем время на 13000
+        BukkitRunnable timeLocker = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!player.isOnline() || !sleepingPlayers.contains(player.getUniqueId())) {
+                    this.cancel();
+                    return;
+                }
+                world.setTime(13000);
+                
+                // Дополнительно обновляем ActionBar каждый тик, 
+                // чтобы он не пропадал раньше времени (опционально)
+                player.sendActionBar(actionBarMessage);
+            }
+        };
+        timeLocker.runTaskTimer(plugin, 0L, 1L);
+
+        // Через 3 секунды будим
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (player.isOnline() && sleepingPlayers.contains(player.getUniqueId())) {
-                world.setTime(0); // Наступает утро (или можете поставить 1000)
+                timeLocker.cancel(); 
+                
+                if (oldDaylightCycle != null) {
+                    world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, oldDaylightCycle);
+                }
+                
+                world.setTime(0); // Утро
                 sleepingPlayers.remove(player.getUniqueId());
+                
+                // Очищаем ActionBar, чтобы текст исчез сразу после пробуждения
+                player.sendActionBar(Component.empty());
             }
-        }, 60L); // 60 тиков = 3 секунды
+        }, 60L); // 3 секунды
     }
 
-    // Очистка, если игрок выйдет из игры пока "спит"
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
-        sleepingPlayers.remove(event.getPlayer().getUniqueId());
+        Player player = event.getPlayer();
+        if (sleepingPlayers.remove(player.getUniqueId())) {
+            World world = player.getWorld();
+            Boolean oldCycle = world.getGameRuleValue(GameRule.DO_DAYLIGHT_CYCLE);
+            if (oldCycle != null) {
+                world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, oldCycle);
+            }
+        }
     }
 }
